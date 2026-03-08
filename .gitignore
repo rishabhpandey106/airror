@@ -1,0 +1,6 @@
+.env
+/venv
+/__pycache__
+workflow.md
+DockerFile
+/debug_search.egg-info
