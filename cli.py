@@ -1,77 +1,70 @@
-# import argparse
-# from parser.error_parser import ErrorParser
-# from search.bm25_search import HybridSearch
-# from index.build_index import build_index
-# import os
-
-# INDEX_DIR = "data/index"
-
-
-# def ensure_index():
-
-#     if not os.path.exists(INDEX_DIR) or not os.listdir(INDEX_DIR):
-
-#         print("Index not found. Building index...")
-
-#         build_index(".")
-
-#         print("Index created successfully.")
-
-
-# def main():
-
-#     parser = argparse.ArgumentParser(
-#         description="AI Debug Code Search"
-#     )
-
-#     parser.add_argument(
-#         "error",
-#         nargs="?",
-#         help="Error message"
-#     )
-
-#     args = parser.parse_args()
-
-#     ensure_index()
-
-#     if args.error:
-#         error_message = args.error
-#     else:
-#         error_message = input("Paste error message:\n")
-
-#     parser_engine = ErrorParser()
-
-#     parsed = parser_engine.parse(error_message)
-
-#     query = parsed["query"]
-
-#     print("\nGenerated Query:", query)
-
-#     search = HybridSearch()
-
-#     results = search.search(query)
-
-#     for r in results:
-
-#         print("\n--- RESULT ---")
-
-#         print("Function:", r.get("function_name"))
-#         print("File:", r.get("file_path"))
-#         print("Lines:", r.get("start_line"), "-", r.get("end_line"))
-
-#         print("\nCode:\n")
-#         print(r.get("code_snippet"))
-
-
-# if __name__ == "__main__":
-#     main()
-
 import argparse
 from parser.error_parser import ErrorParser
-from search.bm25_search import HybridSearch
+from search.pageindex_search import PageIndexSearch
 from index.build_index import build_index
 import os
+from llm.explain import LLMExplainer
+from search.context_retrieval import ContextRetriever
+from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
+from rich.status import Status
+from rich.table import Table
 
+console = Console(width=120)
+
+def show_banner():
+
+    title = Text("""
+██████╗ ███████╗██████╗ ██╗   ██╗ ██████╗
+██╔══██╗██╔════╝██╔══██╗██║   ██║██╔════╝
+██║  ██║█████╗  ██████╔╝██║   ██║██║  ███╗
+██║  ██║██╔══╝  ██╔══██╗██║   ██║██║   ██║
+██████╔╝███████╗██████╔╝╚██████╔╝╚██████╔╝
+╚═════╝ ╚══════╝╚═════╝  ╚═════╝  ╚═════╝
+""", style="bold cyan")
+
+    info = Text(
+        "\nAI Debug Code Search\n"
+        "Developer: Rishabh Pandey\n"
+        "Version: v1.0\n",
+        style="white"
+    )
+
+    console.print(
+        Panel.fit(
+            title + info,
+            border_style="cyan",
+            title="🚀 AIRROR CLI"
+        )
+    )
+
+def show_result(result):
+
+    table = Table(show_header=False, box=None)
+
+    table.add_row("📄 File", result.get("file", "Unknown"))
+    table.add_row("🔧 Function", result.get("function", "Unknown"))
+
+    console.print(Panel(table, title="Location", border_style="cyan", width=120))
+
+    console.print(
+        Panel(
+            result.get("explanation", ""),
+            title="🧠 Explanation",
+            border_style="green",
+            width=120
+        )
+    )
+
+    console.print(
+        Panel(
+            result.get("suggested_fix", ""),
+            title="🛠 Suggested Fix",
+            border_style="yellow",
+            width=120
+        )
+    )
 
 def ensure_index(project_path):
 
@@ -79,16 +72,19 @@ def ensure_index(project_path):
 
     if not os.path.exists(index_dir):
 
-        print("Building index for project...")
+        console.print("\n[bold yellow]⚡ First time setup detected[/bold yellow]")
 
-        build_index(project_path)
+        with console.status("[bold green]Building project index..."):
+            build_index(project_path)
 
-        print("Index created.")
+        console.print("[bold green]✅ Index created successfully![/bold green]\n")
 
 
 def main():
-
+    show_banner()
     parser = argparse.ArgumentParser(description="Debug Code Search")
+    context = ContextRetriever()
+    llm = LLMExplainer(provider="gemini")
 
     parser.add_argument(
         "--project",
@@ -119,22 +115,37 @@ def main():
 
     print("\nGenerated Query:", query)
 
-    # IMPORTANT CHANGE
-    search = HybridSearch(args.project)
+    snippets = []
 
-    results = search.search(query)
+    search = PageIndexSearch(args.project)
 
-    for r in results:
+    if parsed["files"] and parsed["lines"]:
 
-        print("\n--- RESULT ---")
+        context_snippet = context.get_context(
+            parsed["files"][0],
+            parsed["lines"][0]
+        )
 
-        print("Function:", r.get("function_name"))
-        print("File:", r.get("file_path"))
-        print("Line:", r.get("line_number"))
+        if context_snippet:
+            snippets.append(context_snippet)
 
-        print("\nCode:\n")
-        print(r.get("code_snippet"))
+    if not snippets:
+        snippets = search.search(query)
 
+    # for r in snippets:
+
+    #     print("\n--- RESULT ---")
+
+    #     print("Function:", r.get("function_name"))
+    #     print("File:", r.get("file_path"))
+    #     print("Line:", r.get("line_number"))
+
+    #     print("\nCode:\n")
+    #     print(r.get("code_snippet"))
+
+    llm_result = llm.explain(error_message, snippets)
+
+    show_result(llm_result)
 
 if __name__ == "__main__":
     main()
